@@ -15,30 +15,15 @@ export default function LoginPage() {
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 via-white to-sky-50">
-      <div className="max-w-md w-full mx-4">
+      <div className="max-w-sm w-full mx-4">
         <div className="bg-white rounded-2xl shadow-xl p-8 text-center">
           {/* Logo */}
           <div className="w-16 h-16 bg-blue-600 rounded-2xl flex items-center justify-center mx-auto mb-6">
             <MapPin className="w-8 h-8 text-white" />
           </div>
 
-          <h1 className="text-3xl font-bold text-gray-900 mb-2">PhotoMap</h1>
-          <p className="text-gray-500 mb-8">照片与视频的地图管理平台</p>
-
-          {/* Features */}
-          <div className="text-left space-y-3 mb-8">
-            {[
-              { icon: '🗺️', text: '将照片 Pin 到世界地图上' },
-              { icon: '📸', text: '管理你的照片和视频库' },
-              { icon: '📁', text: '创建相册，整理回忆' },
-              { icon: '☁️', text: 'Azure 云端安全存储' },
-            ].map((feature) => (
-              <div key={feature.text} className="flex items-center gap-3 text-sm text-gray-600">
-                <span className="text-lg">{feature.icon}</span>
-                <span>{feature.text}</span>
-              </div>
-            ))}
-          </div>
+          <h1 className="text-3xl font-bold text-gray-900 mb-1">旅行纳豆</h1>
+          <p className="text-gray-400 mb-8">用地图记录旅途</p>
 
           {/* Login Button */}
           <button
@@ -51,12 +36,8 @@ export default function LoginPage() {
             ) : (
               <Camera className="w-5 h-5" />
             )}
-            {isLoading ? '登录中...' : '登录 / 注册'}
+            {isLoading ? '登录中...' : '开始使用'}
           </button>
-
-          <p className="text-xs text-gray-400 mt-4">
-            使用 Auth0 安全认证登录
-          </p>
         </div>
       </div>
     </div>

@@ -33,7 +33,7 @@ export default function Navbar() {
           {/* Logo */}
           <NavLink to="/" className="flex items-center gap-2 text-blue-600 font-bold text-xl no-underline">
             <MapPin className="w-6 h-6" />
-            <span>PhotoMap</span>
+            <span>旅行纳豆</span>
           </NavLink>
 
           {/* Nav Links */}
