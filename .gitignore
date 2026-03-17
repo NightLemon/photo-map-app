@@ -1,0 +1,39 @@
+# Dependencies
+node_modules/
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Build output
+frontend/dist/
+backend/*.egg-info/
+
+# Environment — NEVER commit real .env files
+.env
+.env.local
+.env.development
+.env.production
+frontend/.env.development
+frontend/.env.production
+backend/.env
+# Only allow example files
+!.env.example
+!.env.*.example
+!frontend/.env.example
+!backend/.env.example
+!backend/.env.production.example
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+docker-compose.override.yml
+
+# Logs
+*.log
