@@ -1,0 +1,102 @@
+name: Deploy PhotoMap
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+env:
+  ACR_REGISTRY: photomapacr.azurecr.io
+  ACR_NAME: photomapacr
+  BACKEND_IMAGE: photomapacr.azurecr.io/photomap-api
+  RESOURCE_GROUP: test
+  WEBAPP_NAME: photomap-api
+  SWA_NAME: photomap-frontend
+
+jobs:
+  # ─── Backend: build, push, deploy ───────────────────────────
+  backend:
+    name: Deploy Backend
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Login to Azure
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Login to ACR
+        run: az acr login --name ${{ env.ACR_NAME }}
+
+      - name: Build and push Docker image
+        run: |
+          docker build -t ${{ env.BACKEND_IMAGE }}:${{ github.sha }} -t ${{ env.BACKEND_IMAGE }}:latest .
+          docker push ${{ env.BACKEND_IMAGE }}:${{ github.sha }}
+          docker push ${{ env.BACKEND_IMAGE }}:latest
+
+      - name: Deploy to App Service
+        run: |
+          az webapp config container set \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --name ${{ env.WEBAPP_NAME }} \
+            --container-image-name ${{ env.BACKEND_IMAGE }}:${{ github.sha }}
+          az webapp restart \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --name ${{ env.WEBAPP_NAME }}
+
+      - name: Wait and verify health
+        run: |
+          echo "Waiting 120s for container startup..."
+          sleep 120
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://photomap-api.azurewebsites.net/api/health)
+          if [ "$STATUS" != "200" ]; then
+            echo "Health check failed with status $STATUS"
+            exit 1
+          fi
+          echo "Backend healthy!"
+
+  # ─── Frontend: build, deploy ────────────────────────────────
+  frontend:
+    name: Deploy Frontend
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        env:
+          VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL }}
+          VITE_AUTH0_DOMAIN: ${{ vars.VITE_AUTH0_DOMAIN }}
+          VITE_AUTH0_CLIENT_ID: ${{ vars.VITE_AUTH0_CLIENT_ID }}
+          VITE_AUTH0_AUDIENCE: ${{ vars.VITE_AUTH0_AUDIENCE }}
+          VITE_USE_MOCK_DATA: "false"
+          VITE_ENABLE_DEBUG: "false"
+        run: npm run build
+
+      - name: Deploy to Azure Static Web Apps
+        uses: Azure/static-web-apps-deploy@v1
+        with:
+          azure_static_web_apps_api_token: ${{ secrets.SWA_DEPLOYMENT_TOKEN }}
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          action: upload
+          app_location: frontend/dist
+          skip_app_build: true
+          skip_api_build: true
