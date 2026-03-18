@@ -7,6 +7,7 @@ import {
   FolderOpen,
   LogOut,
   LayoutDashboard,
+  Navigation,
 } from 'lucide-react';
 
 const navItems = [
@@ -15,14 +16,15 @@ const navItems = [
   { to: '/gallery', label: '画廊', icon: Image },
   { to: '/upload', label: '上传', icon: Upload },
   { to: '/albums', label: '相册', icon: FolderOpen },
+  { to: '/trips', label: '行程', icon: Navigation },
 ];
 
 export default function Navbar() {
   const { user, logout } = useAuthStore();
   const navigate = useNavigate();
 
-  const handleLogout = () => {
-    logout();
+  const handleLogout = async () => {
+    await logout();
     navigate('/login');
   };
 
@@ -60,16 +62,19 @@ export default function Navbar() {
           {/* User Menu */}
           <div className="flex items-center gap-3">
             {user && (
-              <div className="flex items-center gap-2">
+              <button
+                onClick={() => navigate('/profile')}
+                className="flex items-center gap-2 hover:opacity-80 transition-opacity"
+              >
                 <img
-                  src={user.avatarUrl}
+                  src={user.avatarUrl || `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.id}`}
                   alt={user.displayName}
                   className="w-8 h-8 rounded-full"
                 />
                 <span className="hidden md:inline text-sm font-medium text-gray-700">
                   {user.displayName}
                 </span>
-              </div>
+              </button>
             )}
             <button
               onClick={handleLogout}

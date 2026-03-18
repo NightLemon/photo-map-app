@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import { Auth0Client } from '@auth0/auth0-spa-js';
 import type { User } from '../types';
 import { config } from '../config';
 import { mockUser } from '../mocks/data';
@@ -12,8 +13,9 @@ interface AuthState {
   isLoading: boolean;
   isInitialized: boolean;
   initializeAuth: () => Promise<void>;
-  login: () => void;
-  logout: () => void;
+  login: () => Promise<void>;
+  logout: () => Promise<void>;
+  getToken: () => Promise<string | null>;
   setUser: (user: User, token: string) => void;
   tryDevLogin: () => Promise<void>;
 }
@@ -25,6 +27,9 @@ interface AuthMeResponse {
   displayName?: string;
   avatar_url?: string;
   avatarUrl?: string;
+  bio?: string;
+  location?: string;
+  website?: string;
   created_at?: string;
   createdAt?: string;
 }
@@ -35,26 +40,36 @@ function normalizeUser(data: AuthMeResponse): User {
     email: data.email,
     displayName: data.displayName ?? data.display_name ?? '',
     avatarUrl: data.avatarUrl ?? data.avatar_url ?? '',
+    bio: data.bio ?? '',
+    location: data.location ?? '',
+    website: data.website ?? '',
     createdAt: data.createdAt ?? data.created_at ?? new Date().toISOString(),
   };
 }
 
-async function fetchCurrentUser(token: string): Promise<User> {
-  const response = await fetch(`${config.apiBaseUrl}/auth/me`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
+// Auth0 client singleton — only created in non-mock, non-debug mode
+let auth0Client: Auth0Client | null = null;
 
-  if (!response.ok) {
-    throw new Error(`Auth bootstrap failed with status ${response.status}`);
+function getAuth0Client(): Auth0Client {
+  if (!auth0Client) {
+    auth0Client = new Auth0Client({
+      domain: config.auth0Domain,
+      clientId: config.auth0ClientId,
+      authorizationParams: {
+        redirect_uri: config.auth0RedirectUri || window.location.origin,
+        audience: config.auth0Audience,
+        scope: 'openid profile email',
+      },
+      cacheLocation: 'memory',
+      useRefreshTokens: true,
+    });
   }
-
-  return normalizeUser((await response.json()) as AuthMeResponse);
+  return auth0Client;
 }
 
 export const useAuthStore = create<AuthState>()(
   persist(
     (set) => ({
-      // In mock mode, start as logged in with the demo user
       user: config.useMockData ? mockUser : null,
       token: config.useMockData ? 'mock-token' : null,
       isAuthenticated: config.useMockData,
@@ -69,53 +84,88 @@ export const useAuthStore = create<AuthState>()(
 
         set({ isLoading: true });
 
-        const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ''));
-        const tokenFromHash = hashParams.get('access_token');
-        const token = tokenFromHash ?? useAuthStore.getState().token;
-
-        if (tokenFromHash) {
-          window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}`);
-        }
-
-        if (!token) {
-          set({ user: null, token: null, isAuthenticated: false, isLoading: false, isInitialized: true });
+        // Debug mode: auto dev login
+        if (config.enableDebug) {
+          if (useAuthStore.getState().user) {
+            await useAuthStore.getState().tryDevLogin();
+          } else {
+            set({ user: null, token: null, isAuthenticated: false, isLoading: false, isInitialized: true });
+          }
           return;
         }
 
-        if (config.enableDebug && token === 'dev-token') {
-          await useAuthStore.getState().tryDevLogin();
-          return;
-        }
-
+        // Production: Auth0 SDK
         try {
-          const user = await fetchCurrentUser(token);
-          set({ user, token, isAuthenticated: true, isLoading: false, isInitialized: true });
-        } catch (error) {
-          console.error('Auth initialization failed:', error);
+          const client = getAuth0Client();
+
+          // Handle redirect callback if returning from Auth0 login
+          if (window.location.search.includes('code=') && window.location.search.includes('state=')) {
+            await client.handleRedirectCallback();
+            window.history.replaceState({}, '', window.location.pathname);
+          }
+
+          // Try to get token silently — this will:
+          // 1. Return cached token if available (same page session)
+          // 2. Use refresh token if available
+          // 3. Use Auth0 session cookie via hidden iframe (silent renew)
+          // Only fails if user has no active Auth0 session at all
+          const token = await client.getTokenSilently();
+
+          // Token obtained — fetch user profile from our backend
+          const response = await fetch(`${config.apiBaseUrl}/auth/me`, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          if (response.ok) {
+            const user = normalizeUser((await response.json()) as AuthMeResponse);
+            set({ user, token, isAuthenticated: true, isLoading: false, isInitialized: true });
+            return;
+          }
+
+          // Backend rejected the token
+          set({ user: null, token: null, isAuthenticated: false, isLoading: false, isInitialized: true });
+        } catch {
+          // No active session — user needs to login
           set({ user: null, token: null, isAuthenticated: false, isLoading: false, isInitialized: true });
         }
       },
 
-      login: () => {
+      login: async () => {
         if (config.useMockData) {
           set({ user: mockUser, token: 'mock-token', isAuthenticated: true, isInitialized: true });
           return;
         }
         if (config.enableDebug) {
-          useAuthStore.getState().tryDevLogin();
+          await useAuthStore.getState().tryDevLogin();
           return;
         }
-        window.location.href = `https://${config.auth0Domain}/authorize?client_id=${config.auth0ClientId}&redirect_uri=${encodeURIComponent(config.auth0RedirectUri)}&response_type=token&scope=openid%20profile%20email&audience=${encodeURIComponent(config.auth0Audience)}`;
+        // Auth0 SDK redirect login (PKCE)
+        const client = getAuth0Client();
+        await client.loginWithRedirect();
       },
 
-      logout: () => {
+      logout: async () => {
         set({ user: null, token: null, isAuthenticated: false, isLoading: false, isInitialized: true });
         if (!config.useMockData && !config.enableDebug) {
-          window.location.href = `https://${config.auth0Domain}/v2/logout?client_id=${config.auth0ClientId}&returnTo=${encodeURIComponent(window.location.origin)}`;
+          const client = getAuth0Client();
+          await client.logout({ logoutParams: { returnTo: window.location.origin } });
         }
       },
 
-      setUser: (user, token) => {
+      getToken: async (): Promise<string | null> => {
+        if (config.useMockData) return 'mock-token';
+        if (config.enableDebug) return useAuthStore.getState().token;
+        try {
+          const client = getAuth0Client();
+          const token = await client.getTokenSilently();
+          set({ token });
+          return token;
+        } catch {
+          void useAuthStore.getState().logout();
+          return null;
+        }
+      },
+
+      setUser: (user: User, token: string) => {
         set({ user, token, isAuthenticated: true, isLoading: false, isInitialized: true });
       },
 
@@ -136,9 +186,6 @@ export const useAuthStore = create<AuthState>()(
     {
       name: 'photomap-auth',
       partialize: (state) => ({
-        // Only persist user profile, NOT the token.
-        // Token stays in memory only — on page reload initializeAuth()
-        // will re-validate via /auth/me or require a fresh login.
         user: state.user,
       }),
     },

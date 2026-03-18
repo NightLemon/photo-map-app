@@ -11,6 +11,7 @@ from app.models.base import Base
 from app.models.user import User  # noqa: F401
 from app.models.media import Media  # noqa: F401
 from app.models.album import Album, AlbumMedia  # noqa: F401
+from app.models.trip import Trip  # noqa: F401
 
 config = context.config
 

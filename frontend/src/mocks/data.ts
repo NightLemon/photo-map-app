@@ -37,6 +37,9 @@ export const mockUser: User = {
   email: 'demo@photomap.app',
   displayName: 'Demo User',
   avatarUrl: 'https://api.dicebear.com/7.x/avataaars/svg?seed=demo',
+  bio: '',
+  location: '',
+  website: '',
   createdAt: '2025-01-15T08:00:00Z',
 };
 

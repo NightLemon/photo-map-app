@@ -9,6 +9,8 @@ import UploadPage from './pages/UploadPage';
 import AlbumsPage from './pages/AlbumsPage';
 import AlbumDetailPage from './pages/AlbumDetailPage';
 import MediaDetailPage from './pages/MediaDetailPage';
+import ProfilePage from './pages/ProfilePage';
+import TripsPage from './pages/TripsPage';
 import LoginPage from './pages/LoginPage';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -53,6 +55,8 @@ export default function App() {
         <Route path="/albums" element={<AlbumsPage />} />
         <Route path="/albums/:id" element={<AlbumDetailPage />} />
         <Route path="/media/:id" element={<MediaDetailPage />} />
+        <Route path="/profile" element={<ProfilePage />} />
+        <Route path="/trips" element={<TripsPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

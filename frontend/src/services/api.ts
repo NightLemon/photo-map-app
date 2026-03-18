@@ -23,8 +23,9 @@ const api = axios.create({
 });
 
 // Attach auth token to every request
-api.interceptors.request.use((reqConfig) => {
-  const token = useAuthStore.getState().token;
+api.interceptors.request.use(async (reqConfig) => {
+  const { getToken } = useAuthStore.getState();
+  const token = await getToken();
   if (token) {
     reqConfig.headers.Authorization = `Bearer ${token}`;
   }

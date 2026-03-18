@@ -27,7 +27,7 @@ export default function LoginPage() {
 
           {/* Login Button */}
           <button
-            onClick={login}
+            onClick={() => void login()}
             disabled={isLoading}
             className="w-full bg-blue-600 text-white rounded-xl py-3 px-4 font-medium text-base hover:bg-blue-700 transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
           >

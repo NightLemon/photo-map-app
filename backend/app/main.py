@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.config import get_settings
-from app.routers import auth, media, albums
+from app.routers import auth, media, albums, trips, transport
 
 logger = logging.getLogger("photomap")
 
@@ -68,6 +68,8 @@ app.add_middleware(
 app.include_router(auth.router, prefix="/api")
 app.include_router(media.router, prefix="/api")
 app.include_router(albums.router, prefix="/api")
+app.include_router(trips.router, prefix="/api")
+app.include_router(transport.router, prefix="/api")
 
 
 @app.get("/api/health")

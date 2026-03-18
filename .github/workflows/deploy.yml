@@ -87,6 +87,7 @@ jobs:
           VITE_AUTH0_DOMAIN: ${{ vars.VITE_AUTH0_DOMAIN }}
           VITE_AUTH0_CLIENT_ID: ${{ vars.VITE_AUTH0_CLIENT_ID }}
           VITE_AUTH0_AUDIENCE: ${{ vars.VITE_AUTH0_AUDIENCE }}
+          VITE_AUTH0_REDIRECT_URI: ${{ vars.VITE_AUTH0_REDIRECT_URI }}
           VITE_USE_MOCK_DATA: "false"
           VITE_ENABLE_DEBUG: "false"
         run: npm run build
