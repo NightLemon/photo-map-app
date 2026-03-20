@@ -31,6 +31,7 @@ class Settings(BaseSettings):
 
     # App
     max_upload_size_mb: int = 100
+    max_zip_size_mb: int = 500
     thumbnail_max_size: int = 400
 
     @model_validator(mode="after")

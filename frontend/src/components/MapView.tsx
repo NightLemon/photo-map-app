@@ -5,7 +5,8 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { useGeoMedia } from '../hooks/useMedia';
 import { useTripMapData } from '../hooks/useTrips';
-import type { GeoMediaPoint, TripMapPoint, TransportType } from '../types';
+import { computeClusters } from '../utils/clusterMedia';
+import type { GeoMediaPoint, TripMapPoint, TransportType, MediaCluster } from '../types';
 
 // Fix default Leaflet marker icon issue with bundlers
 import markerIcon2x from 'leaflet/dist/images/marker-icon-2x.png';
@@ -122,7 +123,6 @@ const tripEmoji: Record<TransportType, string> = {
 function TripRoute({ trip }: { trip: TripMapPoint }) {
   const color = tripColors[trip.transportType] || '#6b7280';
   const emoji = tripEmoji[trip.transportType] || '📍';
-  // Create a curved path for flights (great circle approximation)
   const pathPositions: [number, number][] = useMemo(() => {
     const pts: [number, number][] = [
       [trip.originLat, trip.originLng],
@@ -159,7 +159,6 @@ function TripRoute({ trip }: { trip: TripMapPoint }) {
 
   return (
     <>
-      {/* Route line */}
       <Polyline
         positions={pathPositions}
         pathOptions={{
@@ -179,19 +178,10 @@ function TripRoute({ trip }: { trip: TripMapPoint }) {
           </div>
         </Tooltip>
       </Polyline>
-
-      {/* Glow effect (wider semi-transparent line underneath) */}
       <Polyline
         positions={pathPositions}
-        pathOptions={{
-          color,
-          weight: 8,
-          opacity: 0.15,
-          lineCap: 'round',
-        }}
+        pathOptions={{ color, weight: 8, opacity: 0.15, lineCap: 'round' }}
       />
-
-      {/* Origin marker */}
       <Marker
         position={[trip.originLat, trip.originLng]}
         icon={makeEndpointIcon(trip.originName.length > 6 ? trip.originName.slice(0, 6) : trip.originName, true)}
@@ -205,8 +195,6 @@ function TripRoute({ trip }: { trip: TripMapPoint }) {
           </div>
         </Popup>
       </Marker>
-
-      {/* Destination marker */}
       <Marker
         position={[trip.destLat, trip.destLng]}
         icon={makeEndpointIcon(trip.destName.length > 6 ? trip.destName.slice(0, 6) : trip.destName, false)}
@@ -217,6 +205,63 @@ function TripRoute({ trip }: { trip: TripMapPoint }) {
             <div>{trip.destName}</div>
             {trip.tripNumber && <div style={{ fontFamily: 'monospace', color: '#3b82f6' }}>{trip.tripNumber}</div>}
             <div style={{ color: '#6b7280', marginTop: 2 }}>{dateStr}</div>
+          </div>
+        </Popup>
+      </Marker>
+    </>
+  );
+}
+
+function ClusterTrajectory({ cluster }: { cluster: MediaCluster }) {
+  const positions: [number, number][] = cluster.photos.map((p) => [p.latitude, p.longitude]);
+
+  const centroid = useMemo<[number, number]>(() => {
+    const lat = cluster.photos.reduce((s, p) => s + p.latitude, 0) / cluster.photos.length;
+    const lng = cluster.photos.reduce((s, p) => s + p.longitude, 0) / cluster.photos.length;
+    return [lat, lng];
+  }, [cluster.photos]);
+
+  const countIcon = useMemo(() => {
+    const label = cluster.tripName
+      ? cluster.tripName.length > 10
+        ? cluster.tripName.slice(0, 10) + '…'
+        : cluster.tripName
+      : `${cluster.photos.length} 张`;
+    return L.divIcon({
+      className: '',
+      iconSize: [90, 24],
+      iconAnchor: [45, 12],
+      html: `<div style="display:inline-flex;align-items:center;gap:4px;background:${cluster.color};color:#fff;padding:2px 10px;border-radius:12px;font-size:11px;font-weight:700;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,0.3);border:2px solid #fff;">
+        🗂️ ${label}
+      </div>`,
+    });
+  }, [cluster.color, cluster.tripName, cluster.photos.length]);
+
+  const startStr = new Date(cluster.startDate).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' });
+  const endStr = new Date(cluster.endDate).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' });
+
+  return (
+    <>
+      <Polyline
+        positions={positions}
+        pathOptions={{ color: cluster.color, weight: 2, opacity: 0.7, dashArray: '4,4' }}
+      >
+        <Tooltip sticky>
+          <div style={{ fontSize: 12, lineHeight: 1.5 }}>
+            {cluster.tripName && <div style={{ fontWeight: 700 }}>{cluster.tripName}</div>}
+            <div style={{ color: '#6b7280' }}>{startStr} – {endStr}</div>
+            <div>{cluster.photos.length} 张照片</div>
+          </div>
+        </Tooltip>
+      </Polyline>
+      <Marker position={centroid} icon={countIcon}>
+        <Popup>
+          <div style={{ fontSize: 12, lineHeight: 1.6, minWidth: 150 }}>
+            {cluster.tripName && (
+              <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 4 }}>{cluster.tripName}</div>
+            )}
+            <div style={{ color: '#6b7280' }}>{startStr} – {endStr}</div>
+            <div>{cluster.photos.length} 张照片</div>
           </div>
         </Popup>
       </Marker>
@@ -238,7 +283,11 @@ export default function MapView() {
   const { data: tripRoutes } = useTripMapData();
   const navigate = useNavigate();
 
-  // Collect all map points (photos + trip endpoints) for center/zoom calculation
+  const clusters = useMemo(
+    () => computeClusters(geoMedia ?? [], tripRoutes ?? []),
+    [geoMedia, tripRoutes],
+  );
+
   const allPoints = useMemo(() => {
     const pts: { lat: number; lng: number }[] = [];
     geoMedia?.forEach((p) => pts.push({ lat: p.latitude, lng: p.longitude }));
@@ -292,15 +341,21 @@ export default function MapView() {
           attribution='&copy; <a href="https://carto.com/attributions">CARTO</a> &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
           url="https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png"
         />
+        {/* Trip routes (bold solid/dashed lines, rendered first / bottom) */}
+        {tripRoutes?.map((trip) => (
+          <TripRoute key={trip.id} trip={trip} />
+        ))}
+        {/* Cluster trajectory lines + count markers (thin dashed, middle layer) */}
+        {clusters.map((cluster) => (
+          <ClusterTrajectory key={cluster.id} cluster={cluster} />
+        ))}
+        {/* Individual photo markers on top */}
         {geoMedia?.map((point) => (
           <PhotoMarker
             key={point.id}
             point={point}
             onClick={() => navigate(`/media/${point.id}`)}
           />
-        ))}
-        {tripRoutes?.map((trip) => (
-          <TripRoute key={trip.id} trip={trip} />
         ))}
       </MapContainer>
 
@@ -309,10 +364,10 @@ export default function MapView() {
         <p className="text-sm font-medium text-gray-700">
           📍 {geoMedia?.length ?? 0} 个定位媒体
           {(tripRoutes?.length ?? 0) > 0 && ` · ✈️ ${tripRoutes!.length} 条行程`}
+          {clusters.length > 0 && ` · 🗂️ ${clusters.length} 个聚类`}
         </p>
       </div>
 
-      {/* Empty state — only show if no photos AND no trips */}
       {(!geoMedia || geoMedia.length === 0) && (!tripRoutes || tripRoutes.length === 0) && (
         <div className="absolute inset-0 flex items-center justify-center z-[1000] pointer-events-none">
           <div className="bg-white/90 backdrop-blur-sm rounded-xl p-6 text-center shadow-lg">

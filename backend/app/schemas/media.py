@@ -53,3 +53,17 @@ class GeoMediaPoint(BaseModel):
     description: str
 
     model_config = {"from_attributes": True}
+
+
+class ZipUploadError(BaseModel):
+    filename: str
+    reason: str
+
+
+class ZipUploadResult(BaseModel):
+    total: int
+    succeeded: int
+    failed: int
+    skipped: int
+    items: list[MediaOut]
+    errors: list[ZipUploadError]

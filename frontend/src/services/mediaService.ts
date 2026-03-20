@@ -1,6 +1,6 @@
 import { config } from '../config';
 import { mockMedia, mockAlbums, mockGeoMedia } from '../mocks/data';
-import type { MediaItem, Album, GeoMediaPoint } from '../types';
+import type { MediaItem, Album, GeoMediaPoint, ZipUploadResult, MediaCluster } from '../types';
 import api from './api';
 
 // ---------- Media ----------
@@ -67,6 +67,23 @@ export async function deleteMedia(id: string): Promise<void> {
   await api.delete(`/media/${id}`);
 }
 
+export async function uploadZip(file: File, onProgress?: (pct: number) => void): Promise<ZipUploadResult> {
+  if (config.useMockData) {
+    await new Promise((r) => setTimeout(r, 2000));
+    onProgress?.(100);
+    return { total: 0, succeeded: 0, failed: 0, skipped: 0, items: [], errors: [] };
+  }
+  const form = new FormData();
+  form.append('file', file);
+  const res = await api.post('/media/upload-zip', form, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    onUploadProgress: (e) => {
+      if (e.total) onProgress?.(Math.round((e.loaded / e.total) * 100));
+    },
+  });
+  return res.data;
+}
+
 export async function updateMedia(id: string, data: Partial<MediaItem>): Promise<MediaItem> {
   if (config.useMockData) {
     const item = mockMedia.find((m) => m.id === id);
@@ -117,4 +134,19 @@ export async function createAlbum(data: { name: string; description: string }): 
 export async function deleteAlbum(id: string): Promise<void> {
   if (config.useMockData) return;
   await api.delete(`/albums/${id}`);
+}
+
+export async function addMediaToAlbum(albumId: string, mediaId: string, sortOrder: number): Promise<void> {
+  if (config.useMockData) return;
+  await api.post(`/albums/${albumId}/media`, { media_id: mediaId, sort_order: sortOrder });
+}
+
+export async function createAlbumFromCluster(cluster: MediaCluster): Promise<Album> {
+  const name = cluster.tripName ?? `行程 ${cluster.startDate.slice(0, 10)}`;
+  const description = `${cluster.startDate.slice(0, 10)} — ${cluster.endDate.slice(0, 10)}，共 ${cluster.photos.length} 张`;
+  const album = await createAlbum({ name, description });
+  for (let i = 0; i < cluster.photos.length; i++) {
+    await addMediaToAlbum(album.id, cluster.photos[i].id, i);
+  }
+  return album;
 }

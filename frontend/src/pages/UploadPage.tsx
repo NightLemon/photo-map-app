@@ -25,7 +25,8 @@ export default function UploadPage() {
         <h3 className="text-sm font-medium text-blue-900 mb-2">提示</h3>
         <ul className="text-sm text-blue-700 space-y-1 list-disc list-inside">
           <li>照片中包含 GPS 信息时，会自动在地图上标记位置</li>
-          <li>支持批量上传多个文件</li>
+          <li>支持批量拖入多个文件，最多同时上传 3 个</li>
+          <li>支持 ZIP 压缩包批量导入，最大 500MB，ZIP 内非图片/视频文件会自动跳过</li>
           <li>视频文件当前可上传和播放，缩略图生成功能仍在完善</li>
           <li>上传后可以在媒体详情页手动修改定位</li>
         </ul>

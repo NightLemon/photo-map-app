@@ -115,11 +115,14 @@ npx swa deploy ./dist --deployment-token $token --env production
 
 ### 5. 配置 Auth0
 
-1. 创建 Application（类型：Single Page Application）
+1. 创建 Application（类型：**Single Page Application**）
 2. 创建 API（Identifier 与后端 `AUTH0_API_AUDIENCE` 一致）
 3. API → Application Access → 将你的 App 的 **User Access** 设为 AUTHORIZED
-4. Application → Settings → Allowed Callback/Logout/Web Origins 填你的前端地址
-5. Application → Advanced Settings → Grant Types → 勾选 **Implicit**
+4. Application → Settings → Allowed Callback URLs 填你的前端地址（如 `https://your-app.azurestaticapps.net`）
+5. Application → Settings → Allowed Logout URLs 和 Allowed Web Origins 填同一地址
+6. Application → Advanced Settings → Grant Types → 确认勾选 **Authorization Code**（PKCE），**不需要**也**不应该**勾选 Implicit
+
+> **说明**：前端使用 Auth0 SPA SDK（`@auth0/auth0-react`），走 Authorization Code + PKCE 登录流程，Token 通过 silent refresh（iframe）或 redirect 方式续期。Implicit flow 已弃用，勾选它不会有帮助，反而可能带来安全隐患。
 
 ## CI/CD Pipeline
 

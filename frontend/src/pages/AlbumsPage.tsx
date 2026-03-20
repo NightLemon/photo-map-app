@@ -1,16 +1,115 @@
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useAlbums } from '../hooks/useAlbums';
-import { Plus, FolderOpen } from 'lucide-react';
-import { useState } from 'react';
-import { createAlbum } from '../services/mediaService';
+import { useGeoMedia } from '../hooks/useMedia';
+import { useTripMapData } from '../hooks/useTrips';
+import { Plus, FolderOpen, MapPin, Loader2 } from 'lucide-react';
+import { useState, useMemo } from 'react';
+import { createAlbum, createAlbumFromCluster } from '../services/mediaService';
 import { useQueryClient } from '@tanstack/react-query';
+import { computeClusters } from '../utils/clusterMedia';
+import type { MediaCluster } from '../types';
+
+function ClusterCard({ cluster, onGenerate }: { cluster: MediaCluster; onGenerate: (c: MediaCluster) => Promise<void> }) {
+  const [loading, setLoading] = useState(false);
+  const [done, setDone] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleClick = async () => {
+    if (done || loading) return;
+    setLoading(true);
+    setError(null);
+    try {
+      await onGenerate(cluster);
+      setDone(true);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '生成失败，请重试');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const startDay = cluster.startDate.slice(0, 10);
+  const endDay = cluster.endDate.slice(0, 10);
+  const dateLabel = startDay === endDay ? startDay : `${startDay} — ${endDay}`;
+  const previews = cluster.photos.slice(0, 4);
+
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+      {/* Color bar */}
+      <div className="h-1" style={{ backgroundColor: cluster.color }} />
+
+      {/* Thumbnail strip */}
+      <div className="flex h-24 bg-gray-100">
+        {previews.map((p, i) => (
+          <div key={p.id} className="flex-1 overflow-hidden" style={{ opacity: i >= 3 ? 0.5 : 1 }}>
+            <img src={p.thumbnailUrl} alt={p.originalFilename} className="w-full h-full object-cover" />
+          </div>
+        ))}
+        {cluster.photos.length > 4 && (
+          <div className="w-10 flex items-center justify-center bg-gray-200 text-xs text-gray-600 font-medium">
+            +{cluster.photos.length - 4}
+          </div>
+        )}
+      </div>
+
+      <div className="p-3">
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            {cluster.tripName ? (
+              <p className="text-sm font-semibold text-gray-900 truncate">{cluster.tripName}</p>
+            ) : (
+              <p className="text-sm font-semibold text-gray-500 truncate">未匹配行程</p>
+            )}
+            <p className="text-xs text-gray-400 mt-0.5">{dateLabel}</p>
+            <p className="text-xs text-gray-400 flex items-center gap-1 mt-0.5">
+              <MapPin className="w-3 h-3" />
+              {cluster.photos.length} 张照片
+            </p>
+          </div>
+          <button
+            onClick={handleClick}
+            disabled={loading || done}
+            className={`shrink-0 inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
+              done
+                ? 'bg-green-100 text-green-700 cursor-default'
+                : loading
+                  ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                  : error
+                    ? 'bg-red-600 text-white hover:bg-red-700'
+                    : 'bg-blue-600 text-white hover:bg-blue-700'
+            }`}
+          >
+            {loading ? (
+              <><Loader2 className="w-3 h-3 animate-spin" />生成中…</>
+            ) : done ? (
+              '已生成 ✓'
+            ) : error ? (
+              '失败，点击重试'
+            ) : (
+              <><Plus className="w-3 h-3" />一键生成相册</>
+            )}
+          </button>
+        </div>
+        {error && <p className="text-xs text-red-500 mt-2">{error}</p>}
+      </div>
+    </div>
+  );
+}
 
 export default function AlbumsPage() {
   const { data: albums, isLoading } = useAlbums();
+  const { data: geoMedia } = useGeoMedia();
+  const { data: tripRoutes } = useTripMapData();
   const [showCreate, setShowCreate] = useState(false);
   const [newName, setNewName] = useState('');
   const [newDesc, setNewDesc] = useState('');
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
+
+  const clusters = useMemo(
+    () => computeClusters(geoMedia ?? [], tripRoutes ?? []),
+    [geoMedia, tripRoutes],
+  );
 
   const handleCreate = async () => {
     if (!newName.trim()) return;
@@ -19,6 +118,12 @@ export default function AlbumsPage() {
     setNewName('');
     setNewDesc('');
     setShowCreate(false);
+  };
+
+  const handleGenerateFromCluster = async (cluster: MediaCluster) => {
+    const album = await createAlbumFromCluster(cluster);
+    queryClient.invalidateQueries({ queryKey: ['albums'] });
+    navigate(`/albums/${album.id}`);
   };
 
   return (
@@ -72,6 +177,29 @@ export default function AlbumsPage() {
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Smart clusters section */}
+      {clusters.length > 0 && (
+        <div className="mb-10">
+          <div className="flex items-center gap-2 mb-4">
+            <MapPin className="w-4 h-4 text-indigo-500" />
+            <h2 className="text-base font-semibold text-gray-800">智能行程</h2>
+            <span className="text-xs text-gray-400 bg-gray-100 rounded-full px-2 py-0.5">
+              自动检测到 {clusters.length} 段行程
+            </span>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            {clusters.map((cluster) => (
+              <ClusterCard
+                key={cluster.id}
+                cluster={cluster}
+                onGenerate={handleGenerateFromCluster}
+              />
+            ))}
+          </div>
+          <div className="border-t border-gray-200 mt-8" />
         </div>
       )}
 

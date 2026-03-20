@@ -1,5 +1,8 @@
 import asyncio
+import io
+import mimetypes
 import uuid
+import zipfile
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
@@ -11,7 +14,7 @@ from app.database import get_db
 from app.dependencies import get_current_user
 from app.models.media import Media, MediaType
 from app.models.user import User
-from app.schemas.media import GeoMediaPoint, MediaListOut, MediaOut, MediaUpdate
+from app.schemas.media import GeoMediaPoint, MediaListOut, MediaOut, MediaUpdate, ZipUploadResult, ZipUploadError
 from app.services.exif import extract_exif
 from app.services.storage import delete_blob, get_blob_sas_url, upload_blob
 from app.services.thumbnail import generate_thumbnail
@@ -311,3 +314,173 @@ async def delete_media_item(
             await delete_blob(thumbnail_url, container=get_settings().azure_storage_thumbnails_container)
     except Exception as e:
         logger.warning(f"Orphaned blob after media {media_id} DB delete: {e}")
+
+
+_ALLOWED_EXTENSIONS = {'jpg', 'jpeg', 'png', 'gif', 'webp', 'heic', 'mp4', 'mov', 'avi', 'mkv', 'webm'}
+_EXT_TO_CONTENT_TYPE = {
+    'jpg': 'image/jpeg', 'jpeg': 'image/jpeg', 'png': 'image/png',
+    'gif': 'image/gif', 'webp': 'image/webp', 'heic': 'image/heic',
+    'mp4': 'video/mp4', 'mov': 'video/quicktime', 'avi': 'video/x-msvideo',
+    'mkv': 'video/x-matroska', 'webm': 'video/webm',
+}
+
+_ZIP_MAX_ENTRIES = 1000
+_ZIP_MAX_UNCOMPRESSED_MB = 2000  # 2GB total uncompressed limit
+_ZIP_READ_CHUNK = 65536  # 64KB chunks for streaming read
+
+
+def _read_zip_entry_safe(zf: zipfile.ZipFile, info: zipfile.ZipInfo, limit_bytes: int) -> bytes:
+    """Read a ZIP entry with a hard byte limit to guard against decompression bombs."""
+    out = io.BytesIO()
+    bytes_read = 0
+    with zf.open(info) as fp:
+        while True:
+            chunk = fp.read(_ZIP_READ_CHUNK)
+            if not chunk:
+                break
+            bytes_read += len(chunk)
+            if bytes_read > limit_bytes:
+                raise ValueError(f"Decompressed size exceeds {limit_bytes // (1024*1024)}MB limit")
+            out.write(chunk)
+    return out.getvalue()
+
+
+@router.post("/upload-zip", response_model=ZipUploadResult, status_code=status.HTTP_200_OK)
+async def upload_zip(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+):
+    if not file.filename or not file.filename.lower().endswith('.zip'):
+        raise HTTPException(status_code=400, detail="Only .zip files are accepted")
+
+    contents = await file.read()
+    if len(contents) > settings.max_zip_size_mb * 1024 * 1024:
+        raise HTTPException(status_code=413, detail=f"ZIP too large. Max {settings.max_zip_size_mb}MB")
+
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(contents))
+    except zipfile.BadZipFile:
+        raise HTTPException(status_code=400, detail="Invalid or corrupted ZIP file")
+
+    # Guard: check total entry count and declared uncompressed size before processing
+    all_entries = zf.infolist()
+    file_entries = [e for e in all_entries if not e.is_dir()]
+    if len(file_entries) > _ZIP_MAX_ENTRIES:
+        raise HTTPException(status_code=400, detail=f"ZIP contains too many files (max {_ZIP_MAX_ENTRIES})")
+
+    declared_total = sum(e.file_size for e in file_entries)
+    max_uncompressed = _ZIP_MAX_UNCOMPRESSED_MB * 1024 * 1024
+    if declared_total > max_uncompressed:
+        raise HTTPException(status_code=400, detail=f"ZIP uncompressed content too large (max {_ZIP_MAX_UNCOMPRESSED_MB}MB)")
+
+    succeeded_items: list[MediaOut] = []
+    errors: list[ZipUploadError] = []
+    skipped_count = 0
+    max_single = settings.max_upload_size_mb * 1024 * 1024
+
+    for info in file_entries:
+        filename = info.filename
+        # Skip macOS metadata and hidden files
+        base = filename.split('/')[-1]
+        if base.startswith('.') or '__MACOSX' in filename:
+            skipped_count += 1
+            continue
+
+        ext = filename.rsplit('.', 1)[-1].lower() if '.' in filename else ''
+        if ext not in _ALLOWED_EXTENSIONS:
+            skipped_count += 1
+            continue
+
+        # Zip slip prevention
+        if '..' in filename:
+            errors.append(ZipUploadError(filename=filename, reason="Invalid path"))
+            continue
+
+        try:
+            file_bytes = await asyncio.to_thread(_read_zip_entry_safe, zf, info, max_single)
+        except ValueError as e:
+            errors.append(ZipUploadError(filename=filename, reason=str(e)))
+            continue
+        except Exception:
+            errors.append(ZipUploadError(filename=filename, reason="Failed to read from ZIP"))
+            continue
+
+        if len(file_bytes) > max_single:
+            errors.append(ZipUploadError(filename=filename, reason=f"File too large (max {settings.max_upload_size_mb}MB)"))
+            continue
+
+        content_type = _EXT_TO_CONTENT_TYPE.get(ext, 'application/octet-stream')
+
+        if not _validate_magic_bytes(file_bytes, content_type):
+            errors.append(ZipUploadError(filename=filename, reason="File content does not match its declared type"))
+            continue
+
+        if content_type.startswith('image/'):
+            media_type = MediaType.photo
+        elif content_type.startswith('video/'):
+            media_type = MediaType.video
+        else:
+            errors.append(ZipUploadError(filename=filename, reason="Unsupported file type"))
+            continue
+
+        try:
+            media_id = uuid.uuid4()
+            exif = await asyncio.to_thread(extract_exif, file_bytes) if media_type == MediaType.photo else None
+            safe_filename = f"{media_id}.{ext}"
+
+            blob_path = await upload_blob(
+                data=file_bytes,
+                user_id=current_user.id,
+                media_id=media_id,
+                filename=safe_filename,
+                content_type=content_type,
+            )
+
+            thumb_path = ""
+            thumb_bytes = await asyncio.to_thread(generate_thumbnail, file_bytes, content_type)
+            if thumb_bytes:
+                thumb_filename = f"thumb_{media_id}.jpg"
+                thumb_path = await upload_blob(
+                    data=thumb_bytes,
+                    user_id=current_user.id,
+                    media_id=media_id,
+                    filename=thumb_filename,
+                    content_type="image/jpeg",
+                    container=settings.azure_storage_thumbnails_container,
+                )
+
+            media = Media(
+                id=media_id,
+                user_id=current_user.id,
+                type=media_type,
+                filename=safe_filename,
+                original_filename=base,
+                blob_url=blob_path,
+                thumbnail_url=thumb_path,
+                size_bytes=len(file_bytes),
+                mime_type=content_type,
+                width=exif.width if exif else 0,
+                height=exif.height if exif else 0,
+                latitude=exif.latitude if exif else None,
+                longitude=exif.longitude if exif else None,
+                taken_at=exif.taken_at if exif else None,
+                description="",
+            )
+            db.add(media)
+            await db.flush()
+            succeeded_items.append(_media_to_out(media))
+
+        except Exception as e:
+            logger.warning(f"ZIP upload: failed to process {filename}: {e}")
+            errors.append(ZipUploadError(filename=filename, reason="Processing failed"))
+
+    return ZipUploadResult(
+        total=len(file_entries),
+        succeeded=len(succeeded_items),
+        failed=len(errors),
+        skipped=skipped_count,
+        items=succeeded_items,
+        errors=errors,
+    )

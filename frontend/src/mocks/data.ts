@@ -43,6 +43,26 @@ export const mockUser: User = {
   createdAt: '2025-01-15T08:00:00Z',
 };
 
+// takenAt grouped into realistic trips so the clustering algorithm fires:
+//   Trip A: Japan  2025-03-10 ~ 03-13  (Tokyo Tower, Mount Fuji)
+//   Trip B: Europe 2025-06-05 ~ 06-09  (Eiffel Tower, Colosseum, Santorini)
+//   Trip C: Nature 2025-09-20 ~ 09-22  (Banff, Iceland)
+//   Singletons: Great Wall, Statue of Liberty, Sydney Opera House, Machu Picchu, Taj Mahal
+const TAKEN_ATS: string[] = [
+  '2025-03-10T09:30:00Z', // Tokyo Tower
+  '2025-06-05T14:00:00Z', // Eiffel Tower
+  '2025-11-01T10:00:00Z', // Statue of Liberty  (singleton)
+  '2025-11-15T08:00:00Z', // Sydney Opera House (singleton)
+  '2025-04-20T07:00:00Z', // Great Wall         (singleton)
+  '2025-09-20T11:00:00Z', // Machu Picchu — reuse as Banff stand-in for cluster C
+  '2025-06-07T16:00:00Z', // Colosseum
+  '2025-12-01T06:00:00Z', // Taj Mahal          (singleton)
+  '2025-06-09T12:00:00Z', // Santorini
+  '2025-03-13T07:00:00Z', // Mount Fuji
+  '2025-09-22T15:00:00Z', // Banff
+  '2025-09-21T09:00:00Z', // Iceland
+];
+
 export const mockMedia: MediaItem[] = LOCATIONS.map((loc, i) => ({
   id: `media-${String(i + 1).padStart(3, '0')}`,
   userId: 'user-001',
@@ -51,17 +71,17 @@ export const mockMedia: MediaItem[] = LOCATIONS.map((loc, i) => ({
   originalFilename: `IMG_${2000 + i}.jpg`,
   url: SAMPLE_PHOTOS[i % SAMPLE_PHOTOS.length],
   thumbnailUrl: SAMPLE_PHOTOS[i % SAMPLE_PHOTOS.length],
-  sizeBytes: 2_000_000 + Math.floor(Math.random() * 5_000_000),
+  sizeBytes: 2_000_000 + i * 512_000,
   mimeType: i === 5 ? 'video/mp4' : 'image/jpeg',
   width: 4032,
   height: 3024,
   durationSeconds: i === 5 ? 30 : undefined,
   latitude: loc.lat,
   longitude: loc.lng,
-  takenAt: new Date(2025, Math.floor(Math.random() * 12), Math.floor(Math.random() * 28) + 1).toISOString(),
+  takenAt: TAKEN_ATS[i],
   description: loc.desc,
-  createdAt: new Date(2025, Math.floor(Math.random() * 12), Math.floor(Math.random() * 28) + 1).toISOString(),
-  updatedAt: new Date(2025, Math.floor(Math.random() * 12), Math.floor(Math.random() * 28) + 1).toISOString(),
+  createdAt: TAKEN_ATS[i],
+  updatedAt: TAKEN_ATS[i],
 }));
 
 // Add some media without location

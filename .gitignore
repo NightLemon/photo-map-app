@@ -28,6 +28,9 @@ backend/.env
 .vscode/
 .idea/
 
+# Local agent / AI tool config (machine-specific, not part of the project)
+.claude/settings.local.json
+
 # OS
 .DS_Store
 Thumbs.db

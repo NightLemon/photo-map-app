@@ -64,6 +64,20 @@ export interface UploadProgress {
   error?: string;
 }
 
+export interface ZipUploadError {
+  filename: string;
+  reason: string;
+}
+
+export interface ZipUploadResult {
+  total: number;
+  succeeded: number;
+  failed: number;
+  skipped: number;
+  items: MediaItem[];
+  errors: ZipUploadError[];
+}
+
 export interface UserStats {
   mediaCount: number;
   geoCount: number;
@@ -117,4 +131,14 @@ export interface Station {
   code: string;
   lat: number;
   lng: number;
+}
+
+export interface MediaCluster {
+  id: string;
+  photos: GeoMediaPoint[];
+  startDate: string;
+  endDate: string;
+  tripName?: string;
+  matchedTripId?: string;
+  color: string;
 }
