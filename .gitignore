@@ -40,3 +40,10 @@ docker-compose.override.yml
 
 # Logs
 *.log
+
+# Local-only dev/audit files (not for public repo)
+audits/
+FIXES.md
+_run_backend.ps1
+backend/gen_test_photo.py
+backend/gen_transport_data.py

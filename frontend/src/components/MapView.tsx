@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { MapContainer, TileLayer, Marker, Popup, Polyline, Tooltip } from 'react-leaflet';
 import L from 'leaflet';
@@ -120,25 +120,56 @@ const tripEmoji: Record<TransportType, string> = {
   other: '📍',
 };
 
+/** Great-circle arc using spherical linear interpolation (Slerp).
+ *  Handles antimeridian crossing and pure N-S routes correctly. */
+function greatCircleArc(
+  lat1: number, lng1: number,
+  lat2: number, lng2: number,
+  steps = 50,
+): [number, number][] {
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  const toDeg = (r: number) => (r * 180) / Math.PI;
+
+  // Normalise longitude delta to [-180, 180] to avoid going the long way round
+  let dLng = lng2 - lng1;
+  if (dLng > 180) dLng -= 360;
+  if (dLng < -180) dLng += 360;
+  const lng2Adj = lng1 + dLng;
+
+  const φ1 = toRad(lat1), λ1 = toRad(lng1);
+  const φ2 = toRad(lat2), λ2 = toRad(lng2Adj);
+
+  const points: [number, number][] = [];
+  for (let i = 0; i <= steps; i++) {
+    const f = i / steps;
+    const d = 2 * Math.asin(Math.sqrt(
+      Math.sin((φ2 - φ1) / 2) ** 2 +
+      Math.cos(φ1) * Math.cos(φ2) * Math.sin((λ2 - λ1) / 2) ** 2,
+    ));
+    if (d < 1e-9) { points.push([lat1, lng1]); continue; }
+    const A = Math.sin((1 - f) * d) / Math.sin(d);
+    const B = Math.sin(f * d) / Math.sin(d);
+    const x = A * Math.cos(φ1) * Math.cos(λ1) + B * Math.cos(φ2) * Math.cos(λ2);
+    const y = A * Math.cos(φ1) * Math.sin(λ1) + B * Math.cos(φ2) * Math.sin(λ2);
+    const z = A * Math.sin(φ1) + B * Math.sin(φ2);
+    const lat = toDeg(Math.atan2(z, Math.sqrt(x * x + y * y)));
+    const lng = toDeg(Math.atan2(y, x));
+    points.push([lat, lng]);
+  }
+  return points;
+}
+
 function TripRoute({ trip }: { trip: TripMapPoint }) {
   const color = tripColors[trip.transportType] || '#6b7280';
   const emoji = tripEmoji[trip.transportType] || '📍';
   const pathPositions: [number, number][] = useMemo(() => {
-    const pts: [number, number][] = [
+    if (trip.transportType === 'flight') {
+      return greatCircleArc(trip.originLat, trip.originLng, trip.destLat, trip.destLng);
+    }
+    return [
       [trip.originLat, trip.originLng],
       [trip.destLat, trip.destLng],
     ];
-    if (trip.transportType !== 'flight') return pts;
-    const steps = 40;
-    const points: [number, number][] = [];
-    for (let i = 0; i <= steps; i++) {
-      const t = i / steps;
-      const lat = pts[0][0] + t * (pts[1][0] - pts[0][0]);
-      const lng = pts[0][1] + t * (pts[1][1] - pts[0][1]);
-      const arc = Math.sin(t * Math.PI) * Math.max(2, Math.abs(pts[1][1] - pts[0][1]) * 0.1);
-      points.push([lat + arc, lng]);
-    }
-    return points;
   }, [trip.originLat, trip.originLng, trip.destLat, trip.destLng, trip.transportType]);
 
   const dateStr = new Date(trip.tripDate).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' });
@@ -146,13 +177,14 @@ function TripRoute({ trip }: { trip: TripMapPoint }) {
 
   function makeEndpointIcon(name: string, isOrigin: boolean) {
     const bg = isOrigin ? '#22c55e' : color;
+    const short = name.length > 8 ? name.slice(0, 8) + '…' : name;
     return L.divIcon({
       className: '',
-      iconSize: [100, 28],
-      iconAnchor: [50, 14],
-      html: `<div style="display:inline-flex;align-items:center;gap:4px;background:${bg};color:#fff;padding:2px 8px;border-radius:14px;font-size:11px;font-weight:600;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,0.25);border:2px solid #fff;">
-        <span>${isOrigin ? '🛫' : '🛬'}</span>
-        <span>${name}</span>
+      iconSize: undefined as unknown as [number, number],
+      iconAnchor: [0, 14],
+      html: `<div style="display:inline-flex;align-items:center;gap:4px;background:${bg};color:#fff;padding:2px 8px;border-radius:14px;font-size:11px;font-weight:600;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,0.25);border:2px solid #fff;max-width:160px;overflow:hidden;text-overflow:ellipsis;">
+        <span style="flex-shrink:0">${isOrigin ? '🛫' : '🛬'}</span>
+        <span style="overflow:hidden;text-overflow:ellipsis">${short}</span>
       </div>`,
     });
   }
@@ -184,7 +216,7 @@ function TripRoute({ trip }: { trip: TripMapPoint }) {
       />
       <Marker
         position={[trip.originLat, trip.originLng]}
-        icon={makeEndpointIcon(trip.originName.length > 6 ? trip.originName.slice(0, 6) : trip.originName, true)}
+        icon={makeEndpointIcon(trip.originName, true)}
       >
         <Popup>
           <div style={{ fontSize: 12, lineHeight: 1.5, minWidth: 140 }}>
@@ -197,7 +229,7 @@ function TripRoute({ trip }: { trip: TripMapPoint }) {
       </Marker>
       <Marker
         position={[trip.destLat, trip.destLng]}
-        icon={makeEndpointIcon(trip.destName.length > 6 ? trip.destName.slice(0, 6) : trip.destName, false)}
+        icon={makeEndpointIcon(trip.destName, false)}
       >
         <Popup>
           <div style={{ fontSize: 12, lineHeight: 1.5, minWidth: 140 }}>
@@ -278,10 +310,20 @@ const transportLabelsMap: Record<string, string> = {
   other: '其他',
 };
 
+type LayerKey = 'photos' | 'trips' | 'clusters';
+
 export default function MapView() {
   const { data: geoMedia, isLoading } = useGeoMedia();
   const { data: tripRoutes } = useTripMapData();
   const navigate = useNavigate();
+  const [layers, setLayers] = useState<Record<LayerKey, boolean>>({
+    photos: true,
+    trips: true,
+    clusters: true,
+  });
+
+  const toggleLayer = (key: LayerKey) =>
+    setLayers((prev) => ({ ...prev, [key]: !prev[key] }));
 
   const clusters = useMemo(
     () => computeClusters(geoMedia ?? [], tripRoutes ?? []),
@@ -321,6 +363,12 @@ export default function MapView() {
     return 10;
   }, [allPoints]);
 
+  const layerDefs: { key: LayerKey; label: string; emoji: string; count: number }[] = [
+    { key: 'photos',   label: '照片',    emoji: '📍', count: geoMedia?.length ?? 0 },
+    { key: 'trips',    label: '行程',    emoji: '✈️', count: tripRoutes?.length ?? 0 },
+    { key: 'clusters', label: '聚类轨迹', emoji: '🗂️', count: clusters.length },
+  ];
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-full min-h-[500px]">
@@ -341,16 +389,13 @@ export default function MapView() {
           attribution='&copy; <a href="https://carto.com/attributions">CARTO</a> &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
           url="https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png"
         />
-        {/* Trip routes (bold solid/dashed lines, rendered first / bottom) */}
-        {tripRoutes?.map((trip) => (
+        {layers.trips && tripRoutes?.map((trip) => (
           <TripRoute key={trip.id} trip={trip} />
         ))}
-        {/* Cluster trajectory lines + count markers (thin dashed, middle layer) */}
-        {clusters.map((cluster) => (
+        {layers.clusters && clusters.map((cluster) => (
           <ClusterTrajectory key={cluster.id} cluster={cluster} />
         ))}
-        {/* Individual photo markers on top */}
-        {geoMedia?.map((point) => (
+        {layers.photos && geoMedia?.map((point) => (
           <PhotoMarker
             key={point.id}
             point={point}
@@ -359,13 +404,31 @@ export default function MapView() {
         ))}
       </MapContainer>
 
-      {/* Stats overlay */}
-      <div className="absolute top-3 left-12 bg-white/90 backdrop-blur-sm rounded-lg px-3 py-1.5 shadow-sm z-[1000]">
-        <p className="text-sm font-medium text-gray-700">
-          📍 {geoMedia?.length ?? 0} 个定位媒体
-          {(tripRoutes?.length ?? 0) > 0 && ` · ✈️ ${tripRoutes!.length} 条行程`}
-          {clusters.length > 0 && ` · 🗂️ ${clusters.length} 个聚类`}
-        </p>
+      {/* Layer toggle — top right */}
+      <div className="absolute top-3 right-3 bg-white/95 backdrop-blur-sm rounded-xl shadow-md z-[1000] px-3 py-2 flex flex-col gap-1.5 min-w-[110px]">
+        <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-0.5">图层</p>
+        {layerDefs.map(({ key, label, emoji, count }) => (
+          <button
+            key={key}
+            onClick={() => toggleLayer(key)}
+            disabled={count === 0}
+            className={[
+              'flex items-center gap-2 text-left rounded-lg px-2 py-1 text-xs font-medium transition-colors',
+              count === 0
+                ? 'text-gray-300 cursor-not-allowed'
+                : layers[key]
+                  ? 'bg-blue-50 text-blue-700'
+                  : 'text-gray-500 hover:bg-gray-50',
+            ].join(' ')}
+          >
+            <span className="text-sm leading-none">{emoji}</span>
+            <span className="flex-1">{label}</span>
+            <span className={[
+              'rounded-full px-1.5 py-0.5 text-[10px] font-semibold leading-none',
+              layers[key] && count > 0 ? 'bg-blue-100 text-blue-600' : 'bg-gray-100 text-gray-400',
+            ].join(' ')}>{count}</span>
+          </button>
+        ))}
       </div>
 
       {(!geoMedia || geoMedia.length === 0) && (!tripRoutes || tripRoutes.length === 0) && (
