@@ -386,8 +386,8 @@ export default function MapView() {
         style={{ width: '100%', height: '100%', minHeight: 500, borderRadius: 12 }}
       >
         <TileLayer
-          attribution='&copy; <a href="https://carto.com/attributions">CARTO</a> &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-          url="https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png"
+          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>'
+          url="https://tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
         {layers.trips && tripRoutes?.map((trip) => (
           <TripRoute key={trip.id} trip={trip} />
